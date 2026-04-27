@@ -107,6 +107,41 @@ class DataLoader:
 
         return frames
 
+    def load_universe(
+        self,
+        index: str | list[str],
+        start: DateLike,
+        end: DateLike = None,
+    ) -> dict[str, list[str] | pd.DataFrame]:
+        """
+        end=None  → 返回 start 当天（或之前最近交易日）的成分股 list[str]
+        end 有值  → 返回 [start, end] 区间每个交易日的成分股 DataFrame(date, tickers)
+        """
+        if isinstance(index, str):
+            index = [index]
+        result = {}
+        for idx in index:
+            idx = idx.upper()
+            cache_key = (self.root, idx)
+            if cache_key not in _universe_cache:
+                path = self.root / "daily" / "universe" / f"{idx}.parquet"
+                if not path.exists():
+                    raise FileNotFoundError(f"找不到 universe 文件: {path}")
+                df = pd.read_parquet(path)
+                df["date"] = pd.to_datetime(df["date"])
+                _universe_cache[cache_key] = df.sort_values("date").reset_index(drop=True)
+            df = _universe_cache[cache_key]
+            start_dt = _to_timestamp(start)
+            if end is None:
+                result[idx] = df[df["date"] <= start_dt].iloc[-1]["tickers"].split(",")
+            else:
+                end_dt = _to_timestamp(end)
+                mask = (df["date"] >= start_dt) & (df["date"] <= end_dt)
+                result[idx] = df[mask].reset_index(drop=True)
+        return result
+
+
+_universe_cache: dict[tuple, pd.DataFrame] = {}
 
 # ── 模块级默认实例，直接调用无需实例化 ──────────────────────────
 _default_loader = DataLoader()
@@ -130,3 +165,11 @@ def load_event(
     event: str,
 ) -> dict[str, pd.DataFrame]:
     return _default_loader.load_event(tickers, start, end, event=event)
+
+
+def load_universe(
+    index: str | list[str],
+    start: DateLike,
+    end: DateLike = None,
+) -> dict[str, list[str] | pd.DataFrame]:
+    return _default_loader.load_universe(index, start, end)
