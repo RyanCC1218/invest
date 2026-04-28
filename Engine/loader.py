@@ -1,9 +1,10 @@
 import datetime as dt
+import warnings
 import pandas as pd
 import pyarrow.parquet as pq
 from pathlib import Path
 
-_MARKET_ROOT = Path(__file__).parents[2] / "Market"
+_MARKET_ROOT = Path(__file__).parents[1] / "Market"
 
 _FREQ_DIR = {
     "d":  "daily",
@@ -53,29 +54,27 @@ class DataLoader:
         end_dt   = _to_timestamp(end)
         freq_dir = _FREQ_DIR[freq]
 
+        price_cols = prices if prices else ["open", "high", "low", "close", "adjusted_close", "volume"]
+
         frames: dict[str, pd.DataFrame] = {}
         for ticker in tickers:
             path = self.root / freq_dir / "price" / f"{ticker}.parquet"
             if not path.exists():
+                warnings.warn(f"load_price: 找不到文件 {path}")
+                frames[ticker] = pd.DataFrame()
                 continue
-            cols = ["date"] + (prices if prices else
-                               ["open", "high", "low", "close", "adjusted_close", "volume"])
-            df = pq.read_table(path, columns=cols).to_pandas()
+            df = pq.read_table(path, columns=["date"] + price_cols).to_pandas()
             df["date"] = pd.to_datetime(df["date"])
             df = df[(df["date"] >= start_dt) & (df["date"] <= end_dt)]
             frames[ticker] = df.set_index("date")
 
-        if not frames:
-            return {}
-
-        if group == "prices":
-            all_prices = prices if prices else ["open", "high", "low", "close", "adjusted_close", "volume"]
+        if group == "price":
             return {
                 p: pd.DataFrame({t: frames[t][p] for t in frames if p in frames[t].columns})
-                for p in all_prices
+                for p in price_cols
             }
 
-        return {ticker: frames[ticker] for ticker in frames}
+        return frames
 
 
     def load_event(
@@ -96,14 +95,61 @@ class DataLoader:
 
         frames: dict[str, pd.DataFrame] = {}
         for ticker in tickers:
-            path = self.root / "daily" / "events" / event / f"{ticker}.parquet"
+            path = self.root / "daily" / "event" / event / f"{ticker}.parquet"
             if not path.exists():
+                warnings.warn(f"load_event: 找不到文件 {path}")
+                frames[ticker] = pd.DataFrame()
                 continue
             df = pd.read_parquet(path)
             df["date"] = pd.to_datetime(df["date"])
             df = df[(df["date"] >= start_dt) & (df["date"] <= end_dt)].reset_index(drop=True)
-            if not df.empty:
-                frames[ticker] = df
+            frames[ticker] = df
+
+        return frames
+
+    def load_return(
+        self,
+        tickers: str | list[str],
+        start: DateLike,
+        end: DateLike,
+        returns: list[str] | None = None,
+        freq: str = "d",
+        group: str = "ticker",
+    ) -> dict[str, pd.DataFrame]:
+        """
+        group='ticker' (default) → dict[ticker, DataFrame(date × returns)]
+        group='returns'          → dict[return, DataFrame(date × ticker)]
+        """
+        group = group.lower()
+        if freq not in _FREQ_DIR:
+            raise ValueError(f"不支持的 freq '{freq}'，可选: {list(_FREQ_DIR)}")
+
+        tickers  = _normalize_tickers(tickers)
+        start_dt = _to_timestamp(start)
+        end_dt   = _to_timestamp(end)
+        freq_dir = _FREQ_DIR[freq]
+
+        frames: dict[str, pd.DataFrame] = {}
+        for ticker in tickers:
+            path = self.root / freq_dir / "return" / f"{ticker}.parquet"
+            if not path.exists():
+                warnings.warn(f"load_return: 找不到文件 {path}")
+                frames[ticker] = pd.DataFrame()
+                continue
+            cols = (["date"] + returns) if returns else None
+            df = pq.read_table(path, columns=cols).to_pandas()
+            df["date"] = pd.to_datetime(df["date"])
+            df = df[(df["date"] >= start_dt) & (df["date"] <= end_dt)]
+            frames[ticker] = df.set_index("date")
+
+        if group == "returns":
+            ret_cols = returns if returns else list(
+                next((f.columns for f in frames.values() if not f.empty), pd.Index([]))
+            )
+            return {
+                r: pd.DataFrame({t: frames[t][r] for t in frames if r in frames[t].columns})
+                for r in ret_cols
+            }
 
         return frames
 
@@ -126,7 +172,9 @@ class DataLoader:
             if cache_key not in _universe_cache:
                 path = self.root / "daily" / "universe" / f"{idx}.parquet"
                 if not path.exists():
-                    raise FileNotFoundError(f"找不到 universe 文件: {path}")
+                    warnings.warn(f"load_universe: 找不到文件 {path}")
+                    result[idx] = pd.DataFrame()
+                    continue
                 df = pd.read_parquet(path)
                 df["date"] = pd.to_datetime(df["date"])
                 _universe_cache[cache_key] = df.sort_values("date").reset_index(drop=True)
@@ -165,6 +213,17 @@ def load_event(
     event: str,
 ) -> dict[str, pd.DataFrame]:
     return _default_loader.load_event(tickers, start, end, event=event)
+
+
+def load_return(
+    tickers: str | list[str],
+    start: DateLike,
+    end: DateLike,
+    returns: list[str] | None = None,
+    freq: str = "d",
+    group: str = "ticker",
+) -> dict[str, pd.DataFrame]:
+    return _default_loader.load_return(tickers, start, end, returns=returns, freq=freq, group=group)
 
 
 def load_universe(
