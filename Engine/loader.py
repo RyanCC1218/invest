@@ -112,22 +112,22 @@ class DataLoader:
         tickers: str | list[str],
         start: DateLike,
         end: DateLike,
-        returns: list[str] | None = None,
-        freq: str = "d",
+        returns: str | list[str] | None = None,
         group: str = "ticker",
     ) -> dict[str, pd.DataFrame]:
         """
         group='ticker' (default) → dict[ticker, DataFrame(date × returns)]
-        group='returns'          → dict[return, DataFrame(date × ticker)]
+        group='return'           → dict[return,  DataFrame(date × ticker)]
+        returns 以 'b' 结尾（如 '1b', '5b'）时从 daily/return 读取。
         """
-        group = group.lower()
-        if freq not in _FREQ_DIR:
-            raise ValueError(f"不支持的 freq '{freq}'，可选: {list(_FREQ_DIR)}")
+        if isinstance(returns, str):
+            returns = [returns]
 
+        group    = group.lower()
         tickers  = _normalize_tickers(tickers)
         start_dt = _to_timestamp(start)
         end_dt   = _to_timestamp(end)
-        freq_dir = _FREQ_DIR[freq]
+        freq_dir = "daily" if (returns is None or any(r.endswith("b") for r in returns)) else "daily"
 
         frames: dict[str, pd.DataFrame] = {}
         for ticker in tickers:
@@ -142,7 +142,7 @@ class DataLoader:
             df = df[(df["date"] >= start_dt) & (df["date"] <= end_dt)]
             frames[ticker] = df.set_index("date")
 
-        if group == "returns":
+        if group == "return":
             ret_cols = returns if returns else list(
                 next((f.columns for f in frames.values() if not f.empty), pd.Index([]))
             )
@@ -219,11 +219,10 @@ def load_return(
     tickers: str | list[str],
     start: DateLike,
     end: DateLike,
-    returns: list[str] | None = None,
-    freq: str = "d",
+    returns: str | list[str] | None = None,
     group: str = "ticker",
 ) -> dict[str, pd.DataFrame]:
-    return _default_loader.load_return(tickers, start, end, returns=returns, freq=freq, group=group)
+    return _default_loader.load_return(tickers, start, end, returns=returns, group=group)
 
 
 def load_universe(

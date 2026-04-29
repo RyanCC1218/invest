@@ -3,6 +3,10 @@ import pandas as pd
 from .loader import load_price, DateLike
 
 
+def calc_business_date(start: DateLike, end: DateLike) -> list:
+    return [ts.date() for ts in pd.bdate_range(start, end)]
+
+
 def calc_forward_close(
     tickers: str | list[str],
     start: DateLike,
