@@ -1,10 +1,58 @@
+import re
 import warnings
+from datetime import date
+from dateutil.relativedelta import relativedelta
+import holidays
 import pandas as pd
 from .loader import load_price, DateLike
 
+_NYSE_HOLIDAYS = holidays.NYSE()
+
+
+def _is_business_day(d: date) -> bool:
+    return d.weekday() < 5 and d not in _NYSE_HOLIDAYS
+
+
+def calc_add_date(base_date: DateLike, offset: str) -> date:
+    """
+    Add or subtract business days (b), calendar months (m), or years (y) from a date.
+    Business days ('b') skip weekends and NYSE holidays; 'd'/'m'/'y' use calendar arithmetic.
+    Examples: '1b', '-3b', '1d', '1m', '-1m', '2y', '-10y'.
+    """
+    m = re.fullmatch(r'(-?\d+)([bBdDmMyY])', offset.strip())
+    if not m:
+        raise ValueError(f"Invalid offset format: '{offset}'. Expected e.g. '1b', '-1m', '2y'.")
+    n, unit = int(m.group(1)), m.group(2).lower()
+
+    if isinstance(base_date, str):
+        base_date = pd.Timestamp(base_date).date()
+    elif isinstance(base_date, pd.Timestamp):
+        base_date = base_date.date()
+
+    if unit == 'b':
+        if n == 0:
+            return base_date
+        step = 1 if n > 0 else -1
+        current = base_date
+        remaining = abs(n)
+        while remaining > 0:
+            current += relativedelta(days=step)
+            if _is_business_day(current):
+                remaining -= 1
+        return current
+    elif unit == 'd':
+        return base_date + relativedelta(days=n)
+    elif unit == 'm':
+        return base_date + relativedelta(months=n)
+    elif unit == 'y':
+        return base_date + relativedelta(years=n)
+    else:
+        raise ValueError(f"Unknown unit '{unit}'.")
+
 
 def calc_business_date(start: DateLike, end: DateLike) -> list:
-    return [ts.date() for ts in pd.bdate_range(start, end)]
+    all_days = pd.bdate_range(start, end)
+    return [ts.date() for ts in all_days if ts.date() not in _NYSE_HOLIDAYS]
 
 
 def calc_forward_close(
