@@ -53,7 +53,7 @@ def calc_add_date(base_date: DateLike, offset: str) -> date:
 
 def calc_business_date(start: DateLike, end: DateLike) -> list:
     all_days = pd.bdate_range(start, end)
-    return [ts.date() for ts in all_days if ts.date() not in _NYSE_HOLIDAYS]
+    return [ts for ts in all_days if ts.date() not in _NYSE_HOLIDAYS]
 
 
 def calc_verify_universe(
